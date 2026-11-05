@@ -1,0 +1,47 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function myRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+    function isAdmin() { return signedIn() && myRole() == 'admin'; }
+    function changed() { return request.resource.data.diff(resource.data).affectedKeys(); }
+
+    match /users/{id} {
+      allow read: if signedIn() && (request.auth.uid == id || isAdmin());
+      // Self-registration is always a citizen with 0 points.
+      allow create: if signedIn() && request.auth.uid == id
+                    && request.resource.data.role == 'citizen'
+                    && request.resource.data.points == 0;
+      allow update: if isAdmin()
+                    || (request.auth.uid == id
+                        && changed().hasOnly(['fcmToken', 'name', 'phone']));
+    }
+
+    match /requests/{id} {
+      allow read: if signedIn() && (resource.data.userId == request.auth.uid
+                    || resource.data.driverId == request.auth.uid || isAdmin());
+      allow create: if signedIn() && request.resource.data.userId == request.auth.uid
+                    && request.resource.data.status == 'pending';
+      allow update: if isAdmin()
+                    || (resource.data.driverId == request.auth.uid
+                        && changed().hasOnly(['status']));
+    }
+
+    match /complaints/{id} {
+      allow read: if signedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if signedIn() && request.resource.data.userId == request.auth.uid
+                    && request.resource.data.status == 'open';
+      allow update: if isAdmin()
+                    || (resource.data.userId == request.auth.uid
+                        && changed().hasOnly(['rating']));
+    }
+
+    match /routes/{id} {
+      allow read: if signedIn() && (resource.data.driverId == request.auth.uid || isAdmin());
+      allow write: if false; // written by Cloud Functions only
+    }
+  }
+}
